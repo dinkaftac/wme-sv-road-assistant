@@ -7,6 +7,8 @@
 // @license      MIT
 // @homepageURL  https://github.com/dinkaftac/wme-sv-road-assistant
 // @supportURL   https://github.com/dinkaftac/wme-sv-road-assistant/issues
+// @downloadURL  https://raw.githubusercontent.com/dinkaftac/wme-sv-road-assistant/main/wme-sv-road-assistant.user.js
+// @updateURL    https://raw.githubusercontent.com/dinkaftac/wme-sv-road-assistant/main/wme-sv-road-assistant.user.js
 // @copyright    2026, dinkaftac
 // @match        https://www.waze.com/editor*
 // @match        https://www.waze.com/*/editor*
