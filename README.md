@@ -1,10 +1,10 @@
 # WME Street View Road Assistant
 
-A manual-assistance userscript for the Waze Map Editor (WME). It proposes **draft** road segments over places where Street View coverage exists but no Waze segment is mapped. You review every draft, align it to the real road, and save it yourself.
+A manual-assistance userscript for the Waze Map Editor (WME). It proposes draft road segments over places where Street View coverage exists but no Waze segment is mapped. You review every draft, align it to the real road, and save it yourself.
 
-> **Status: 1.0.0 beta.** Not audited by the Waze editing community. Use at your own risk.
+**Status: 1.0.0 beta.** Not audited by the Waze editing community. Use at your own risk.
 
-Built to assist a human editor, not to mass-edit: **the tool proposes, the editor decides.** It is not an automated editor, and it is not endorsed or approved by Waze. Before using it, read the official [Guidelines for Bulk Editing Scripts](https://www.waze.com/discuss/t/guidelines-for-bulk-editing-scripts/407412) and your local community's rules.
+Built to assist a human editor, not to mass-edit: the tool proposes, the editor decides. It is not an automated editor, and it is not endorsed or approved by Waze. Before using it, read the official [Guidelines for Bulk Editing Scripts](https://www.waze.com/discuss/t/guidelines-for-bulk-editing-scripts/407412) and your local community's rules.
 
 ## What it does
 
@@ -15,17 +15,17 @@ Built to assist a human editor, not to mass-edit: **the tool proposes, the edito
 
 ## What it never does
 
-- It never saves. Drafts stay pending until you press WME's own **Save** button.
+- It never saves. Drafts stay pending until you press WME's own Save button.
 - It never edits, deletes or moves existing segments, junctions or turn restrictions.
 - It never connects drafts to existing roads. You connect them by hand.
 
 ## How candidate shapes are made (please read)
 
-The script requests Street View coverage tiles from `mts*.google.com` and **derives candidate line shapes from the coverage pixels**. The shapes are only a starting guess, and they can be offset, cut short, or wrong.
+The script requests Street View coverage tiles from `mts*.google.com` and derives candidate line shapes from the coverage pixels. The shapes are only a starting guess, and they can be offset, cut short, or wrong.
 
 - Treat every draft as unverified. Align it to the real road centerline using satellite imagery or other sources you are allowed to use, then verify it before saving.
 - Do not rely on the draft geometry as it is.
-- The tile endpoint is unofficial and may change or stop working without notice.
+- The tile endpoint is unofficial and may change or stop working without notice. If it does, the script cannot detect coverage.
 - Check your local Waze community's rules on external reference sources before using or sharing this script.
 
 ## Requirements
@@ -35,11 +35,13 @@ The script requests Street View coverage tiles from `mts*.google.com` and **deri
 
 ## Install
 
-1. Open `wme-sv-road-assistant-1.0.0-beta.user.js` in this repository and click **Raw**.
-2. Confirm the installation in Tampermonkey.
+1. Install Tampermonkey or a compatible userscript manager.
+2. **[Click here to install WME Street View Road Assistant](https://raw.githubusercontent.com/dinkaftac/wme-sv-road-assistant/main/wme-sv-road-assistant.user.js)** and confirm the installation.
 3. Reload WME.
 
-The script is not on Greasyfork, so updates are manual. When replacing the code in the Tampermonkey editor, press **Ctrl+A** before pasting, so the new version does not end up pasted inside the old one.
+**Updates:** your userscript manager checks this repository automatically (Tampermonkey about once a day by default) and offers the new version when the `@version` number goes up. You can also run "Check for userscript updates" in Tampermonkey. The script is not on Greasyfork. If you paste new code into the Tampermonkey editor by hand, press Ctrl+A first, so the new version does not end up pasted inside the old one.
+
+*If you installed an earlier copy, reinstall once with the link above to get automatic updates.*
 
 ## Workflow: Scan → Convert → Edit → Save
 
@@ -60,7 +62,7 @@ The script is not on Greasyfork, so updates are manual. When replacing the code 
 
 ### After conversion
 
-- A converted candidate becomes a WME draft segment and disappears from the candidate layer at once. Its internal state changes from `Candidate` to `Drafted`.
+- A converted candidate becomes a WME draft segment and disappears from the candidate layer at once. Its internal state changes from Candidate to Drafted.
 - Scanning again over the same area does not propose it again.
 - If you undo the draft segment in WME, the candidate comes back in the list.
 
@@ -70,7 +72,7 @@ Use **Remove** on a converted draft, or Ctrl+Z in WME while the drafts are still
 
 ## Reminders (never blocking)
 
-All reminders are friendly checkpoints shown as a dismissible box at the top of the panel. They advise the editor and **never stop a conversion**. The numbers are labelled "script default" and can be changed or switched off in Settings.
+All reminders are friendly checkpoints shown as a dismissible box at the top of the panel. They advise the editor and never stop a conversion. The numbers are labelled "script default" and can be changed or switched off in Settings.
 
 - **Over-cap reminder.** If you tick more than the cap, for example 50 against a cap of 30: "You ticked 50; the cap is 30. This click will attempt 30. 20 stay ticked for the next pass."
 - **Unsaved-edits reminder.** WME's total unsaved-edit count includes every kind of edit: new segments, connections, segment info, geometry changes and so on. When it reaches your threshold (script default 300; set 0 to never be reminded), the script reminds you to finish aligning, connecting and saving before adding more. It fires once per crossing and re-arms when the count falls below the threshold.
@@ -79,20 +81,20 @@ All reminders are friendly checkpoints shown as a dismissible box at the top of 
 ## Panel controls
 
 | Control | What it does |
-|---|---|
-| Scan | Finds candidates in the current view. |
-| Convert | Creates the ticked candidates as new drafts in WME. Nothing is saved. |
-| Remove | Undoes the ticked drafts, or removes ticked rows from the lists. |
-| Flip (⇆) | Swaps the A and B ends of a candidate. Also flips neighbours that share a junction within 3 m. The result carries into the segment when you Convert. |
-| 1W / 2W | Switches a candidate between one-way (A to B) and two-way. |
-| Zoom (⌖) | Zooms the map to a candidate. |
-| Street View | Shows or hides the Street View coverage layer. |
-| Guide | Shows the scanned-area guide frame and tips. |
+| --- | --- |
+| **Scan** | Finds candidates in the current view. |
+| **Convert** | Creates the ticked candidates as new drafts in WME. Nothing is saved. |
+| **Remove** | Undoes the ticked drafts, or removes ticked rows from the lists. |
+| **Flip (⇆)** | Swaps the A and B ends of a candidate. Also flips neighbours that share a junction within 3 m. The result carries into the segment when you Convert. |
+| **1W / 2W** | Switches a candidate between one-way (A to B) and two-way. |
+| **Zoom (⌖)** | Zooms the map to a candidate. |
+| **Street View** | Shows or hides the Street View coverage layer. |
+| **Guide** | Shows the scanned-area guide frame and tips. |
 
 ### Seams and junction dots
 
-- A blue dot marks an end that is a junction with a mapped road or another candidate. It stays on the same physical end when you flip.
-- A seam badge shows whether the direction is clean where a draft meets an existing segment. `✓` means flow is continuous. `⚠ old #id` means an existing segment's direction forces a break. `⚠ user` means a hand-locked neighbour does.
+- A **blue dot** marks an end that is a junction with a mapped road or another candidate. It stays on the same physical end when you flip.
+- A **seam badge** shows whether the direction is clean where a draft meets an existing segment. ✓ means flow is continuous. ⚠ old #id means an existing segment's direction forces a break. ⚠ user means a hand-locked neighbour does.
 - Orientation comes only from adjacent existing segments or the traced order. When the two ends disagree, the stronger existing segment (higher lock, then higher road type) wins.
 
 ## Settings
@@ -100,7 +102,7 @@ All reminders are friendly checkpoints shown as a dismissible box at the top of 
 Saved in your browser (`localStorage`, key `wme-svra-settings`).
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | Min map zoom to scan | 16 |
 | Zoom button level | 18 |
 | Detection radius (m) | 20 |
@@ -121,6 +123,12 @@ Saved in your browser (`localStorage`, key `wme-svra-settings`).
 | Tile budget per scan | 40 |
 | Auto show/hide coverage with Street View | on |
 
+## Troubleshooting
+
+- **The panel does not appear:** check that your userscript manager is enabled for the page and that Chrome's "Allow User Scripts" toggle is on. Open the browser console and filter by `WME Street View Road Assistant`. You should see `SDK initialized in async mode`, `WME ready` and `Initialised v1.0.0-beta`.
+- **Scan finds no coverage or reports that no tiles loaded:** the Street View tile endpoint may be blocked, offline or changed (see "How candidate shapes are made"). The message names the first failed tile.
+- **Debug output:** run `localStorage.setItem('wme-svra-debug','1')` in the console and reload. Run `localStorage.removeItem('wme-svra-debug')` to turn it off.
+
 ## Known limitations
 
 - Drafts are not aligned to any GPS data. Align them by hand.
@@ -138,7 +146,9 @@ Saved in your browser (`localStorage`, key `wme-svra-settings`).
 
 ## About
 
-Written by dinkaftac ((https://github.com/dinkaftac)). AI tools helped with code review and documentation. The author made the design decisions and approved the code.
+Written by [dinkaftac](https://github.com/dinkaftac). AI tools helped with code review and documentation. The author made the design decisions and approved the code.
+
+Bug reports and suggestions: [issue tracker](https://github.com/dinkaftac/wme-sv-road-assistant/issues).
 
 ## Disclaimer
 
