@@ -138,7 +138,7 @@ Saved in your browser (`localStorage`, key `wme-svra-settings`).
 
 ## About
 
-Written by dinkaftac ([9w2xne](https://github.com/9w2xne)). AI tools helped with code review and documentation. The author made the design decisions and approved the code.
+Written by dinkaftac ((https://github.com/dinkaftac)). AI tools helped with code review and documentation. The author made the design decisions and approved the code.
 
 ## Disclaimer
 
