@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         WME Street View Road Assistant
-// @namespace    https://github.com/9w2xne/wme-sv-road-assistant
+// @namespace    https://github.com/dinkaftac/wme-sv-road-assistant
 // @version      1.0.0-beta
 // @description  Manual assistance for editors: the script proposes draft segments over Street View coverage gaps. Every draft must be reviewed by the editor, aligned to the road centerline, and confirmed against the latest satellite imagery before WME's native Save. Nothing is ever saved automatically, and no existing road is modified. Built to assist a human editor, not to mass-edit: the tool proposes, the editor decides.
-// @author       dinkaftac (https://github.com/9w2xne)
+// @author       dinkaftac (https://github.com/dinkaftac)
 // @license      MIT
-// @homepageURL  https://github.com/9w2xne/wme-sv-road-assistant
-// @supportURL   https://github.com/9w2xne/wme-sv-road-assistant/issues
+// @homepageURL  https://github.com/dinkaftac/wme-sv-road-assistant
+// @supportURL   https://github.com/dinkaftac/wme-sv-road-assistant/issues
 // @copyright    2026, dinkaftac
 // @match        https://www.waze.com/editor*
 // @match        https://www.waze.com/*/editor*
