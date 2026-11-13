@@ -7,8 +7,6 @@
 // @license      MIT
 // @homepageURL  https://github.com/dinkaftac/wme-sv-road-assistant
 // @supportURL   https://github.com/dinkaftac/wme-sv-road-assistant/issues
-// @downloadURL  https://raw.githubusercontent.com/dinkaftac/wme-sv-road-assistant/main/wme-sv-road-assistant.user.js
-// @updateURL    https://raw.githubusercontent.com/dinkaftac/wme-sv-road-assistant/main/wme-sv-road-assistant.user.js
 // @copyright    2026, dinkaftac
 // @match        https://www.waze.com/editor*
 // @match        https://www.waze.com/*/editor*
@@ -35,6 +33,7 @@
   const SCRIPT_NAME = 'WME Street View Road Assistant';
   const LAYER_COVERAGE = 'Street View Coverage';
   const LAYER_CANDIDATE = 'SV Candidate Roads';
+  const LAYER_WME_SUGGESTIONS = 'editSuggestions';
 
   const TILE_FILE = 'mapslt?lyrs=svv&x=${x}&y=${y}&z=${z}&w=256&h=256&style=40';
   const TILE_SERVERS = ['https://mts0.google.com', 'https://mts1.google.com', 'https://mts2.google.com', 'https://mts3.google.com'];
@@ -52,9 +51,7 @@
 
   const NEVER_CONNECT = [5, 10, 15, 16, 18, 19];
   const SAFE_PENDING_LIMIT = 30;
-  const FINAL_VIEW_PAUSE_MS = 2000;   // let the editor see the last draft before the view snaps back
-  // How long an acknowledgement is remembered before the dialog can reappear.
-  // Set to 3 days by default; users who want it longer can adjust.
+  const FINAL_VIEW_PAUSE_MS = 2000;
   const RESPONSIBILITY_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
   const ORIENT_REACH = 6;
   const ROAD_TYPE_NAMES = {
@@ -68,10 +65,10 @@
     detectionRadius: 20,
     minCandidateLength: 30,
     maxCandidatesStorage: 1000,
-    maxDraftCreationBatch: 1,      // author-recommended: one draft per sub-batch, each checked against loaded tiles
+    maxDraftCreationBatch: 1,
     maxConvertPerClick: 10,
-    maxPendingEdits: 300,          // reminder threshold (0 = never remind)
-    unverifiedSoftStopPct: 150,    // reminder when unsaved script drafts reach this % of the per-click cap (0 = off)
+    maxPendingEdits: 300,
+    unverifiedSoftStopPct: 150,
     batchPauseMs: 2000,
     convertDelayMs: 300,
     tileSettleMs: 1500,
@@ -92,7 +89,6 @@
     responsibilityAcknowledgedAt: 0
   };
   let sdk = null;
-
   const Log = {
     debug: (() => { try { return localStorage.getItem('wme-svra-debug') === '1'; } catch (e) { return false; } })(),
     d(...a) { if (this.debug) console.debug(`[${SCRIPT_NAME}]`, ...a); },
@@ -236,7 +232,6 @@
       }
     };
   }
-
   /* ===== TILE FETCH + CACHE ===== */
   function fetchTile(x, y, z) {
     const url = `${TILE_SERVERS[x % TILE_SERVERS.length]}/${TILE_FILE}`.replace('${x}', x).replace('${y}', y).replace('${z}', z);
@@ -263,7 +258,7 @@
   const TILE_CACHE = new Map();
   const TILE_CACHE_MAX = 100;
   function closeBitmapLater(p) {
-    p.then((b) => { try { if (b && typeof b.close === 'function') b.close(); } catch (e) { /* ignore */ } }).catch(() => {});
+    p.then((b) => { try { if (b && typeof b.close === 'function') b.close(); } catch (e) {} }).catch(() => {});
   }
   function fetchTileCached(x, y, z) {
     const key = `${z}/${x}/${y}`;
@@ -272,7 +267,6 @@
     const p = fetchTile(x, y, z).catch(() => fetchTile(x, y, z));
     TILE_CACHE.set(key, p);
     p.catch(() => { if (TILE_CACHE.get(key) === p) TILE_CACHE.delete(key); });
-    // Never evict below one full scan's worth of tiles, or an in-flight bitmap could be closed early.
     if (TILE_CACHE.size > Math.max(TILE_CACHE_MAX, (Settings.get('maxSampleTiles') || MAX_TILES) + 20)) {
       const oldKey = TILE_CACHE.keys().next().value;
       const old = TILE_CACHE.get(oldKey);
@@ -309,7 +303,6 @@
     }
     return { zoom, auto, extent: [w, s, e, n], x0, x1, y0, y1, tiles: (x1 - x0 + 1) * (y1 - y0 + 1), shrunk, maxTiles };
   }
-
   /* ===== SCAN FRAME / GUIDE OVERLAY ===== */
   const SCAN_FRAME_LAYER = 'SVRA.ScanFrame';
   let scanFrameLayerReady = false;
@@ -337,7 +330,6 @@
     if (!extent) return;
     ensureScanFrameLayer();
     try { sdk.Map.removeAllFeaturesFromLayer({ layerName: SCAN_FRAME_LAYER }); } catch (e) {}
-
     const [w, s, e, n] = extent;
     const features = [{
       type: 'Feature',
@@ -345,7 +337,6 @@
       geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
       properties: { featureType: kind }
     }];
-
     if (Log.debug && tileInfo && typeof tileInfo === 'object') {
       const { x0, x1, y0, y1, zoom } = tileInfo;
       const n2 = 2 ** zoom;
@@ -395,7 +386,6 @@
     const first = coords[0].slice(), last = coords[coords.length - 1].slice();
     const total = Geo.length(coords);
     if (total < 6) return [first, last];
-
     const ref = first[1];
     const P = coords.map((c) => Geo.xy(c, ref));
     const step = 2;
@@ -421,12 +411,10 @@
     }
     S[0] = P[0]; S[S.length - 1] = P[P.length - 1];
     R[0] = P[0]; R[R.length - 1] = P[P.length - 1];
-
     const A = S[0], B = S[S.length - 1];
     let maxDev = 0;
     for (const p of S) maxDev = Math.max(maxDev, Geo.nearestOnSeg(p, A, B).d);
     if (maxDev <= straightTol) return [first, last];
-
     const dp = (tol) => {
       const keep = new Array(S.length).fill(false);
       keep[0] = keep[S.length - 1] = true;
@@ -486,13 +474,44 @@
     }
     return null;
   }
-
   function isConnectable(rt) {
     if (NEVER_CONNECT.includes(rt)) return false;
     try { return !!sdk.DataModel.Segments.isRoadTypeDrivable({ roadType: rt }); } catch (e) { return true; }
   }
   const lockOf = (s) => (typeof s.lockRank === 'number' ? s.lockRank : (typeof s.rank === 'number' ? s.rank : 0));
   const lockLabel = (r) => `L${r + 1}`;
+
+  /* ===== END EXTENSION ===== */
+  function extendToRoads(coords, pool) {
+    if (!coords || coords.length < 2 || !pool || !pool.length) return coords;
+    const maxGap = (Settings.get('detectionRadius') || 20) + 8;
+    const out = coords.slice();
+    const tryEnd = (atStart) => {
+      const idx = atStart ? 0 : out.length - 1;
+      const end = out[idx];
+      const hit = WazeData.nearest(end, maxGap, pool);
+      if (!hit || hit.dist < 2) return;
+      const t = hit.seg;
+      if (!t.connectable || NEVER_CONNECT.includes(t.roadType)) return;
+      if (lockOf(t) > State.editorRank) return;
+      let back = atStart ? 1 : out.length - 2;
+      while (back > 0 && back < out.length - 1 && Geo.haversine(end, out[back]) < 8) back += atStart ? 1 : -1;
+      back = Math.max(1, Math.min(out.length - 2, back));
+      const ref = end[1];
+      const pe = Geo.xy(end, ref), pb = Geo.xy(out[back], ref), ph = Geo.xy(hit.point, ref);
+      const dir = [pe[0] - pb[0], pe[1] - pb[1]], to = [ph[0] - pe[0], ph[1] - pe[1]];
+      const ld = Math.hypot(dir[0], dir[1]), lt = Math.hypot(to[0], to[1]);
+      if (!ld || !lt) return;
+      if ((dir[0] * to[0] + dir[1] * to[1]) / (ld * lt) < 0.5) return;
+      let target = hit.point;
+      const nodes = [t.coords[0], t.coords[t.coords.length - 1]];
+      for (const n of nodes) if (Geo.haversine(n, hit.point) <= 5) { target = n; break; }
+      if (atStart) out.unshift(target); else out.push(target);
+    };
+    tryEnd(true);
+    tryEnd(false);
+    return out;
+  }
 
   /* ===== JUNCTIONS ===== */
   const Junctions = {
@@ -552,10 +571,7 @@
     }
   };
 
-  /* ===== CHAIN BOUNDARY / LINKS =====
-   * Only boundary detection and neighbour lookup are kept. Compass-based orientation was
-   * removed: the SDK defines no preferred A->B direction, so orientation comes solely from
-   * adjacent existing segments (boundary constraints) or the traced order. */
+  /* ===== CHAIN BOUNDARY / LINKS ===== */
   const Chain = {
     boundary(pieces, pool) {
       if (!pieces.length) return [];
@@ -578,13 +594,7 @@
       }
       return out;
     },
-    // Which existing segment wins when two ends disagree: higher lock first, then higher road type.
     strength(c) { return (c.lock || 0) * 100 + (c.roadType || 0); },
-
-    // Decide whether a candidate should be reversed so its ends meet the adjacent existing segments
-    // cleanly (A|B seams). Both orientations are scored by how many boundary constraints they satisfy;
-    // on a tie the orientation that honours the STRONGER existing segment wins. No compass rule:
-    // orientation comes only from adjacent segments or the traced order.
     solve(coords, pool) {
       const cons = this.boundary([{ coords }], pool);
       if (!cons.length) return { flipped: false, cons, breaks: {} };
@@ -601,7 +611,6 @@
       const useFlip = flip.n > normal.n || (flip.n === normal.n && flip.weight > normal.weight);
       return { flipped: useFlip, cons, breaks: (useFlip ? flip : normal).breaks };
     },
-
     links(cand) {
       const reach = 3;
       const out = [];
@@ -615,7 +624,6 @@
       return out;
     }
   };
-
   /* ===== SETTINGS ===== */
   const Settings = {
     data: { ...DEFAULT_SETTINGS },
@@ -630,8 +638,6 @@
         if (this.data.roadPreset === 'service') this.data.roadPreset = 'street';
         ['traceProfile', 'smoothStraightenTol', 'smoothSimplifyTol', 'smoothMaxNodes']
           .forEach((k) => { delete this.data[k]; });
-        // Respect the acknowledgement cooldown: if the last ack was more than
-        // RESPONSIBILITY_COOLDOWN_MS ago, forget it so the user is asked again.
         if (saved.responsibilityAcknowledged === true) {
           const ackedAt = saved.responsibilityAcknowledgedAt || 0;
           const age = Date.now() - ackedAt;
@@ -649,11 +655,23 @@
     save() { try { localStorage.setItem('wme-svra-settings', JSON.stringify(this.data)); } catch (e) {} },
     get(k) { return this.data[k]; },
     set(k, v) { this.data[k] = v; this.save(); },
-    roadTypeFor(key) {
+    async roadTypeFor(key) {
       const preset = PRESETS.find((p) => p.key === key) || PRESETS[0];
-      const types = safe('getRoadTypes', () => sdk.DataModel.Segments.getRoadTypes(), []) || [];
-      if (types.length && !types.some((t) => t.id === preset.roadType)) {
-        Log.w(`roadTypeFor: road type ${preset.roadType} (${preset.label}) not in getRoadTypes() — falling back to Street. SDK shape may have changed.`);
+
+      let types = [];
+      try {
+        types = sdk.DataModel.Segments.getRoadTypes();
+        if (isPromise(types)) types = await types;
+      } catch (err) {
+        Log.w('roadTypeFor: getRoadTypes failed; using the preset directly', err);
+        return preset.roadType;
+      }
+      types = Array.isArray(types) ? types : [];
+
+      const known = types.some((t) => t && (t.id === preset.roadType || t.roadType === preset.roadType));
+
+      if (types.length && !known) {
+        Log.w(`roadTypeFor: ${preset.roadType} (${preset.label}) not in getRoadTypes(); falling back to Street.`);
         return 1;
       }
       return preset.roadType;
@@ -686,7 +704,6 @@
     stale(ttlMs = 1500) { return !this.cache || (Date.now() - this.cacheAt) >= ttlMs; },
 
     async refresh(force = false) {
-      // Only reuse a NON-EMPTY cache. An empty result (WME not loaded yet) must never be cached.
       if (!force && this.cache && this.cache.length && (Date.now() - this.cacheAt) < this.CACHE_TTL_MS) return;
       if (this.refreshing) return this.refreshing;
       this.refreshing = (async () => {
@@ -766,7 +783,6 @@
       catch (err) { Log.e('setMapCenter failed', err); }
     }
   };
-
   /* ===== COVERAGE LAYER ===== */
   const Coverage = {
     visible: false, created: false, manual: false,
@@ -800,10 +816,60 @@
     }
   };
 
+  /* ===== WME SUGGESTION (TASK) LAYER OWNERSHIP ===== */
+const SuggestionLayer = {
+  visible: false,     // what the script last set the layer to
+  active: 0,          // number of import passes currently running
+  wasOn: null,        // user's own state when the outermost pass began
+
+  async _read() {
+    try {
+      let v = sdk.LayerSwitcher.getWMELayerVisibility({ layerName: LAYER_WME_SUGGESTIONS });
+      if (v && typeof v.then === 'function') v = await v;
+      return typeof v === 'boolean' ? v : null;
+    } catch (err) {
+      Log.e('sugg layer read failed', err);
+      return null;
+    }
+  },
+  _apply(v) {
+    const want = !!v;
+    if (want === this.visible) return;
+    const ok = safe('sugg layer vis', () => {
+      sdk.LayerSwitcher.setWMELayerVisibility({ layerName: LAYER_WME_SUGGESTIONS, isVisible: want });
+      return true;
+    }, false);
+    if (ok) { this.visible = want; Log.i(`WME suggestion layer ${want ? 'enabled' : 'disabled'}`); }
+  },
+
+  async begin() {
+    if (this.active === 0) {
+      const current = await this._read();
+      this.wasOn = current === null ? this.visible : current;
+      if (current !== null) this.visible = current;   // re-sync with WME
+    }
+    this.active++;
+    this._apply(true);
+  },
+
+  async end() {
+    this.active = Math.max(0, this.active - 1);
+    if (this.active > 0) return;
+    const restore = this.wasOn === true;
+    this.wasOn = null;
+    if (!restore) this._apply(false);
+  },
+
+  async init() {
+    const current = await this._read();
+    this.visible = current === null ? false : !!current;
+  }
+};
   /* ===== CELL / PATH EXTRACTION ===== */
   const CELL_KEY = 16777216;
   const cellKey = (gx, gy) => gx * CELL_KEY + gy;
   const cellXY = (k) => { const gy = k % CELL_KEY; return [(k - gy) / CELL_KEY, gy]; };
+
   function bfs(start, set) {
     const parent = new Map([[start, null]]);
     const dist = new Map([[start, 0]]);
@@ -863,6 +929,33 @@
     return paths;
   }
 
+  /* ===== MAP-LOAD WAITER ===== */
+  const MapLoad = {
+    waiters: new Set(),
+    lastAt: 0,
+    async settle(quietMs = 900, maxMs = 8000) {
+      const end = Date.now() + maxMs;
+      while (Date.now() < end) {
+        if (Date.now() - this.lastAt >= quietMs) return true;
+        await sleep(150);
+      }
+      return false;
+    },
+    notify() { this.lastAt = Date.now(); this.waiters.forEach((w) => w()); },
+    wait({ timeoutMs = 10000, quietMs = 600 } = {}) {
+      return new Promise((resolve) => {
+        let quiet = null, hard = null, done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true; clearTimeout(quiet); clearTimeout(hard);
+          this.waiters.delete(onEvt); resolve(v);
+        };
+        const onEvt = () => { clearTimeout(quiet); quiet = setTimeout(() => finish(true), quietMs); };
+        hard = setTimeout(() => finish(false), timeoutMs);
+        this.waiters.add(onEvt);
+      });
+    }
+  };
   /* ===== CANDIDATES ===== */
   const Candidates = {
     _canvas: null, _ctx: null,
@@ -938,7 +1031,7 @@
     },
 
     async scan() {
-      if (State.scanning) return 0;
+      if (State.scanning) { UI.notify('A scan or import is already running.', 'warn'); return 0; }
       if (Generated.busy || Generated._waiting) {
         UI.notify('A conversion batch is running. Let it finish (or stop it) before scanning again.', 'warn');
         return 0;
@@ -953,8 +1046,6 @@
           const ext0 = await MapUtil.extent();
           const cx = (ext0[0] + ext0[2]) / 2, cy = (ext0[1] + ext0[3]) / 2;
           Log.i(`auto-zoom from ${zoom} to ${need} to bring every street into view`);
-          // WME loads the editable segments only at zoom 16+, and sends its "map data loaded" event a few
-          // seconds after the zoom. Wait for that event (not just a fixed delay) before reading the roads.
           UI.setBusy(true, 'Zooming in and waiting for WME to load the roads...');
           const loadedAfterZoom = MapLoad.wait({ timeoutMs: 8000, quietMs: 900 });
           await MapUtil.focus([cx, cy], need);
@@ -965,20 +1056,14 @@
             throw new Error(`Still at zoom ${zoom} (needed ${need}); WME refused to zoom. Zoom in manually and Scan again.`);
           }
         }
-        // Roads for the new view may still be arriving (after an auto-zoom or a recent pan). Scanning now
-        // would miss them and propose candidates on roads that are already mapped.
         UI.setBusy(true, 'Waiting for WME to finish loading the roads...');
         {
-          // Ready = the road count in view has not changed over two checks and no map-data event arrived
-          // for 0.9 s.
           let prevN = -1, stable = 0;
           const giveUp = Date.now() + 8000;
           while (Date.now() < giveUp) {
             await WazeData.refresh(true);
             const n = WazeData.inBox(await MapUtil.extent()).length;
             const quiet = Date.now() - MapLoad.lastAt >= 900;
-            // An empty view must stay empty much longer (about 3 s): at zoom 16 WME can take a while to
-            // deliver the first segments, and accepting "0 roads" too early is how candidates end up on mapped roads.
             const need = (n === 0 && WazeData.all().length === 0) ? 6 : 2;
             if (n === prevN && quiet) { if (++stable >= need) break; } else stable = 0;
             prevN = n;
@@ -1028,7 +1113,7 @@
         for (const path of paths) {
           const coords = Geo.simplify(path.map(cellCenter), 1);
           if (coords.length < 2 || Geo.length(coords) < Settings.get('minCandidateLength')) continue;
-          this.absorb(coords, stats, wazeSegs);
+          this.absorb(extendToRoads(coords, wazeSegs), stats, wazeSegs);
         }
         const t = this._scanTiming || {};
         Log.i(`scan timings: total ${Math.round(performance.now() - t0)} ms, fetch+decode ${t.fetchMs ?? '?'} ms for ${t.tiles ?? '?'} tiles, ` +
@@ -1045,13 +1130,89 @@
         State.scanning = false;
         UI.setBusy(false);
         clearScanFrame();
-        try { CandidateLayer.refresh(); } catch (e) { Log.e('cand layer refresh', e); }
-        UI.changed();
+        UI.changed();          // UI.changed() already calls CandidateLayer.refresh()
         UI.updateGuide();
       }
     },
 
     liveCount() { return [...State.candidates.values()].filter((c) => c.status === 'Candidate').length; },
+
+    async importSuggestions() {
+      if (State.scanning) { UI.notify('A scan is running. Let it finish, then import.', 'warn'); return 0; }
+      if (Generated.busy || Generated._waiting) {
+        UI.notify('A conversion batch is running. Let it finish before importing.', 'warn');
+        return 0;
+      }
+      State.scanning = true;
+      UI.setBusy(true, 'Reading WME segment suggestions...');
+      try {
+        await SuggestionLayer.begin();
+        await WazeData.refresh(true);
+        let zoom = await MapUtil.zoom();
+        if (zoom !== null && zoom < Settings.get('minScanZoom')) {
+          const need = Settings.get('minScanZoom');
+          const ext0 = await MapUtil.extent();
+          const cx = (ext0[0] + ext0[2]) / 2, cy = (ext0[1] + ext0[3]) / 2;
+          Log.i(`import auto-zoom from ${zoom} to ${need} to load suggestions`);
+          UI.setBusy(true, 'Zooming in and waiting for WME to load the suggestions...');
+          const loadedAfterZoom = MapLoad.wait({ timeoutMs: 8000, quietMs: 900 });
+          await MapUtil.focus([cx, cy], need);
+          if (!(await loadedAfterZoom)) Log.d('no map-data event after the import auto-zoom; checking the suggestion count instead');
+          await WazeData.refresh(true);
+          zoom = await MapUtil.zoom();
+          if (zoom !== null && zoom < need) {
+            throw new Error(`Still at zoom ${zoom} (needed ${need}); WME refused to zoom. Zoom in manually and Import suggestions again.`);
+          }
+        }
+
+        if (SuggestionLayer.wasOn === false) {
+          UI.setBusy(true, 'Waiting for WME to load suggestions...');
+          let prev = -1, stable = 0;
+          const until = Date.now() + 10000;
+          while (Date.now() < until) {
+            let a = sdk.DataModel.SegmentSuggestions.getAll();
+            if (isPromise(a)) a = await a;
+            const n = (a || []).length;
+            if (n === prev) { if (++stable >= 2) break; } else stable = 0;
+            prev = n;
+            await sleep(400);
+          }
+        }
+        UI.setBusy(true, 'Reading WME segment suggestions...');
+        const api = sdk.DataModel.SegmentSuggestions;
+        if (!api || typeof api.getAll !== 'function') throw new Error('This WME build has no SegmentSuggestions API.');
+        let all = api.getAll();
+        if (isPromise(all)) all = await all;
+        const ext = await MapUtil.extent();
+        const list = (all || []).filter((s) => s && s.status === 'OPEN' && !s.segmentId
+          && s.geometry && s.geometry.coordinates && s.geometry.coordinates.length > 1
+          && Geo.bboxOverlap(Geo.bbox(s.geometry.coordinates), ext));
+        if (State.candidates.size) this.pruneMapped();
+        const wazeSegs = WazeData.inBox(Geo.bboxPad(ext, Settings.get('detectionRadius') + 50));
+        const stats = { added: 0, merged: 0, duplicate: 0, full: 0, split: 0 };
+        for (const s of list) {
+          const coords = Geo.simplify(s.geometry.coordinates.map((c) => [c[0], c[1]]), 1);
+          if (coords.length < 2) continue;
+          this.absorb(extendToRoads(coords, wazeSegs), stats, wazeSegs);
+        }
+        this.pruneMapped();
+        const short = list.length - stats.added - stats.merged - stats.duplicate;
+        UI.notify(`Suggestions in view: ${list.length} open. +${stats.added} new, ${stats.merged} merged, ${stats.duplicate} already listed${short > 0 ? `, ${short} skipped (shorter than ${Settings.get('minCandidateLength')} m or already on a mapped road)` : ''}. Candidates: ${this.liveCount()}.`,
+          stats.added || stats.merged ? 'ok' : 'info');
+        return stats.added + stats.merged;
+      } catch (err) {
+        Log.e('importSuggestions', err);
+        UI.notify(`Import failed: ${err.message}`, 'err');
+        return 0;
+      } finally {
+        State.scanning = false;
+        await SuggestionLayer.end();
+        UI.setBusy(false);
+        // Do NOT call UI.changed()/CandidateLayer.refresh() here.
+        // The caller (UI.onClick 'import-sug') owns the re-render so the
+        // busy-import style stays visible for exactly the duration of the import.
+      }
+    },
 
     splitByProtection(coords) {
       const buf = Settings.get('highLockBuffer');
@@ -1224,13 +1385,9 @@
           if (review) c.review = review;
           if (origStart) c.origStart = origStart;
           if (origEnd) c.origEnd = origEnd;
-          // Merge-time flag update: take the OR of the two sides at each end. The join
-          // helper already refuses to join across junction ends, so no junction can become
-          // interior to the merged line.
           const pJm = junctionInfo || {};
           c.jStart = !!(c.jStart || pJm.jStart);
           c.jEnd = !!(c.jEnd || pJm.jEnd);
-          // Re-stamp seams from boundary constraints against the new geometry.
           this.restampSeams(c);
           stats.merged++;
           return true;
@@ -1242,8 +1399,6 @@
       let reversed = false;
       const reverse = () => { coords = coords.slice().reverse(); const t = os; os = oe; oe = t; reversed = !reversed; };
 
-      // Boundary orientation: Chain.solve scores both orientations against the adjacent existing
-      // segments (stronger segment wins a tie). No compass rule (SDK has none).
       const pool = WazeData.inBox(Geo.bboxPad(Geo.bbox(coords), ORIENT_REACH + 20));
       if (Chain.solve(coords, pool).flipped) reverse();
 
@@ -1267,7 +1422,7 @@
       stats.added++;
       return true;
     },
-    // Recompute the seam badges of a candidate from the existing segments next to its two ends.
+
     restampSeams(c, pool) {
       const p = pool || WazeData.inBox(Geo.bboxPad(Geo.bbox(c.coords), ORIENT_REACH + 20));
       c.seamStart = { state: 'clean' };
@@ -1287,7 +1442,6 @@
       const present = dFirst <= dLast ? 'A' : 'B';
       return present === wantNode;
     },
-
 
     tryJoinJunctionAware(a, b, m, pJ, cJ) {
       const ea = [a[0], a[a.length - 1]], eb = [b[0], b[b.length - 1]];
@@ -1316,6 +1470,8 @@
         if (pts.filter((p) => WazeData.nearest(p, det, segs)).length / pts.length >= 0.7) { State.candidates.delete(c.id); n++; return; }
         const fine = Geo.densify(c.coords, 3);
         const on = fine.map((p) => !!WazeData.nearest(p, 3, segs));
+        for (let i = 0; i < on.length; i++) { if (Geo.haversine(fine[0], fine[i]) <= 4) on[i] = false; else break; }
+        for (let i = on.length - 1; i >= 0; i--) { if (Geo.haversine(fine[fine.length - 1], fine[i]) <= 4) on[i] = false; else break; }
         if (!on.some(Boolean)) return;
         const minLen = Settings.get('minCandidateLength');
         const runs = [];
@@ -1343,17 +1499,14 @@
       visited.add(c.id);
       c.coords = c.coords.slice().reverse();
       const t = c.origStart; c.origStart = c.origEnd; c.origEnd = t;
-      // The junction dot belongs to the physical end, so it moves to the other column with A/B.
       const jt = c.jStart; c.jStart = !!c.jEnd; c.jEnd = !!jt;
       c.flowLocked = true;
-      // Seam badges depend on which end is A, so recompute them against the existing segments.
       try { this.restampSeams(c); } catch (e) { Log.w('restamp after flip failed', e); }
 
       const links = Chain.links(c);
       for (const nb of links) {
         if (nb.flowLocked) continue;
         if (visited.has(nb.id)) continue;
-        // Propagate ONLY across seams that are junctions on BOTH sides.
         const near = (a, b) => Geo.haversine(a, b) <= 3;
         const cEnds = [
           { pt: c.coords[0],                     j: !!c.jStart },
@@ -1378,40 +1531,8 @@
     },
     clear() { State.candidates.clear(); }
   };
-
-  /* ===== MAP-LOAD WAITER ===== */
-  const MapLoad = {
-    waiters: new Set(),
-    lastAt: 0,
-    // Resolves once WME has sent no map-data event for quietMs (or after maxMs). Used so a scan or a
-    // convert does not read the road data while WME is still loading it after a zoom or pan.
-    async settle(quietMs = 900, maxMs = 8000) {
-      const end = Date.now() + maxMs;
-      while (Date.now() < end) {
-        if (Date.now() - this.lastAt >= quietMs) return true;
-        await sleep(150);
-      }
-      return false;
-    },
-    notify() { this.lastAt = Date.now(); this.waiters.forEach((w) => w()); },
-    wait({ timeoutMs = 10000, quietMs = 600 } = {}) {
-      return new Promise((resolve) => {
-        let quiet = null, hard = null, done = false;
-        const finish = (v) => {
-          if (done) return;
-          done = true; clearTimeout(quiet); clearTimeout(hard);
-          this.waiters.delete(onEvt); resolve(v);
-        };
-        const onEvt = () => { clearTimeout(quiet); quiet = setTimeout(() => finish(true), quietMs); };
-        hard = setTimeout(() => finish(false), timeoutMs);
-        this.waiters.add(onEvt);
-      });
-    }
-  };
-
   /* ===== GENERATED SEGMENTS ===== */
   async function getSeg(id) {
-    // Always read fresh: undo checks must see a deleted segment as gone, not a cached object.
     try { let s = sdk.DataModel.Segments.getById({ segmentId: id }); if (isPromise(s)) s = await s; return s || null; }
     catch (e) { return null; }
   }
@@ -1471,7 +1592,6 @@
         if (!alreadyThere || attempt > 0) {
           const loaded = MapLoad.wait();
           await MapUtil.focus(coord, zoom);
-          // WME fires no load event when the data for the new view was already cached, so a timeout is normal.
           if (!(await loaded)) Log.d('no wme-map-data-loaded before timeout; verifying the map centre anyway');
         }
         await WazeData.refresh();
@@ -1502,8 +1622,6 @@
       return Math.max(own, wme === null ? 0 : wme);
     },
 
-    // Nearest-first order: candidates already inside the starting view first, then by distance from
-    // the starting view centre. Candidates skipped in this run are left out.
     _orderPicked(list, run) {
       const rest = list.filter((c) => !(run.skipped && run.skipped.has(c.id)));
       const ctr = run.savedCenter, ext = run.startExtent;
@@ -1514,8 +1632,6 @@
         .sort((x, y) => x.v - y.v || x.d - y.d).map((x) => x.c);
     },
 
-    // Points that must be inside the loaded view for a candidate to be converted: both ends and the
-    // middle vertex. (A long candidate may be larger than the view, so the whole bbox is not required.)
     _probePoints(coords) {
       return [coords[0], coords[Math.floor(coords.length / 2)], coords[coords.length - 1]];
     },
@@ -1525,16 +1641,11 @@
       return pts.every((p) => p[0] >= ext[0] && p[0] <= ext[2] && p[1] >= ext[1] + padLat && p[1] <= ext[3] - padLat);
     },
 
-    // Wait until WME has really finished loading the map data around the batch. Creating a segment
-    // while the area's tiles are still loading makes WME treat it as a suggested edit and send it
-    // for review straight away, so Convert refuses to run until the data is loaded and steady.
     async _confirmTilesLoaded(first, mult = 1) {
       const settle = Math.min(20000, Math.max(500, Number(Settings.get('tileSettleMs')) || 1500) * mult);
       let probe = this._probePoints(first.coords);
       let why = 'timed out';
 
-      // A candidate longer than the view cannot be shown whole. Visit each end first so WME loads
-      // the tiles there, then come back to the middle and require only the middle to be in view.
       if (!this._ptsInside(probe, await MapUtil.extent())) {
         const zoom = (await MapUtil.zoom()) || 16;
         const fb = Geo.bbox(first.coords);
@@ -1547,9 +1658,6 @@
         }
         probe = [probe[1]];
       }
-      // Poll instead of waiting for an event: WME fires no "map data loaded" event when the view was
-      // already cached, and a sparsely mapped area can legitimately show zero roads. Ready = the probe
-      // points are inside the view and no map-data event has arrived for `settle` ms.
       const t0 = Date.now();
       const limit = t0 + 8000 * mult + settle;
       while (Date.now() < limit) {
@@ -1572,7 +1680,6 @@
       Log.w(`tile check failed for ${first.id}: ${why}`);
       return { ok: false, why };
     },
-
     async convertSelected(isContinuation = false) {
       if (this.busy || this._waiting) return;
 
@@ -1595,7 +1702,7 @@
 
           const per = Math.max(1, Settings.get('maxDraftCreationBatch'));
           const perClickCap = Math.min(50, Math.max(per, Number(Settings.get('maxConvertPerClick')) || per));
-          const autoBatch = true;   // sub-batches continue silently until the per-click cap is reached
+          const autoBatch = true;
 
           const toConvert = autoBatch
             ? Math.min(picked.length, perClickCap)
@@ -1604,7 +1711,6 @@
           const total = Math.ceil(toConvert / per);
           const risk = remindAt > 0 && pending + toConvert >= remindAt;
 
-          // Friendly checkpoints: they advise the editor and never block the conversion.
           const notes = [];
           if (picked.length > perClickCap) {
             notes.push(`You ticked ${picked.length}; the cap is ${perClickCap}. This click will attempt ${perClickCap}. ${picked.length - perClickCap} stay ticked for the next pass.`);
@@ -1656,7 +1762,6 @@
       const run = this._run;
       run.n++;
       if (!run.skipped) run.skipped = new Set();
-      // Nearest-first: candidates already on screen come first, then by distance from the starting view.
       picked = this._orderPicked(picked, run);
 
       const per = Math.max(1, Settings.get('maxDraftCreationBatch'));
@@ -1697,7 +1802,6 @@
         UI.notify(`${lead}${skippedNote()} Map view restored. Review each draft, align to the road centerline / satellite imagery, then press WME's Save. Nothing has been saved yet.`, run.skipped.size ? 'warn' : 'ok');
         UI.changed();
       };
-      // Never abort the whole click for one candidate: skip it (it stays ticked) and carry on.
       const skipAndContinue = async (cand, why) => {
         run.skipped.add(cand.id);
         Log.w(`skipping ${cand.id}: ${why}`);
@@ -1717,7 +1821,6 @@
       let pan;
       this._waiting = true;
       try {
-        // A candidate that is already on screen is converted without moving the map.
         const ext0 = await MapUtil.extent();
         const z0 = await MapUtil.zoom();
         if (z0 !== null && z0 >= Settings.get('convertZoom') && this._ptsInside(this._probePoints(firstCand.coords), ext0)) {
@@ -1729,7 +1832,6 @@
       } finally { this._waiting = false; }
       if (!pan.ok) return skipAndContinue(firstCand, `the map did not centre on it (off by ${Math.round(pan.dist)} m)`);
 
-      // Do not create anything until WME has finished loading the tiles for this area.
       let tiles;
       this._waiting = true;
       try {
@@ -1744,8 +1846,6 @@
       if (!tiles.ok) return skipAndContinue(firstCand, `tiles not confirmed (${tiles.why})`);
       Log.i(`tiles confirmed loaded (${tiles.roads} roads in view)`);
       {
-        // Only convert candidates that sit fully inside the view that was just confirmed. The rest
-        // stay ticked and are handled by the next batch, after the map pans to them.
         const ext = await MapUtil.extent();
         const fits = (c) => this._ptsInside(this._probePoints(c.coords), ext);
         const keep = batch.filter((c, i) => i === 0 || fits(c));
@@ -1755,7 +1855,7 @@
         }
       }
 
-      const rt = Settings.roadTypeFor(Settings.get('roadPreset'));
+      const rt = await Settings.roadTypeFor(Settings.get('roadPreset'));
       let userStop = false, created = 0, failed = 0, consecFail = 0, rejected = 0, stoppedAt = null, hitLimit = false;
       const madeRows = [];
 
@@ -1776,7 +1876,6 @@
           } catch (err) {
             failed++; consecFail++;
             Log.e('addSegment failed', c.id, err);
-            // Keep going: tag this candidate, untick it so it is not retried in a loop, carry on.
             c.review = 'WME refused to create this draft'; c.selected = false;
             if (consecFail >= 3) { stoppedAt = c; break; }
             continue;
@@ -1808,8 +1907,6 @@
         }
       } finally { this.busy = false; UI.setBusy(false); }
 
-      // WME can silently drop a new segment (toast "That change isn't allowed at this time"). Check once
-      // that every draft is still there; put any that vanished back as candidates, tagged for review.
       if (madeRows.length) {
         await sleep(1500);
         for (const { c, row } of madeRows) {
@@ -1869,6 +1966,7 @@
       UI.notify(`${message}${skippedNote()} Map view restored. Review each draft, align to the road centerline / satellite imagery, then press WME's Save. Nothing has been saved yet.`, (failed || remainingCount > 0 || hitLimit || run.skipped.size) ? 'warn' : 'ok');
       UI.changed();
     },
+
     async remove(rows) {
       if (this.busy) return { undone: 0, listed: 0, refused: 'Busy, try again in a moment.' };
       this.busy = true;
@@ -1905,12 +2003,47 @@
       return res;
     },
 
+    async removeOne(g) {
+      if (this.busy) return { ok: false, msg: 'Busy, try again in a moment.' };
+      const ids = (g.segmentIds || []).slice();
+      const unsaved = ids.filter((id) => typeof id === 'number' && id < 0);
+      if (g.status === 'Saved' || g.status === 'Error' || !unsaved.length) {
+        State.generated.delete(g.id);
+        return { ok: true, listed: true };
+      }
+      this.busy = true;
+      try {
+        for (const id of unsaved) {
+          if (!(await getSeg(id))) continue;
+          try {
+            let r = sdk.DataModel.Segments.deleteSegment({ segmentId: id });
+            if (isPromise(r)) await r;
+          } catch (err) { Log.w(`deleteSegment #${id} failed`, err); }
+        }
+        await sleep(250);
+        let still = false;
+        for (const id of unsaved) if (await getSeg(id)) still = true;
+        if (still) {
+          this.busy = false;
+          const res = await this.remove([g]);
+          if (res.undone) return { ok: true };
+          return { ok: false, msg: res.refused || 'WME would not delete this draft. Select it and press Delete in WME.' };
+        }
+        g.status = 'Undone'; g.segmentIds = []; g.selected = false;
+        UI.trashCandidate(g.cand);
+        State.generated.delete(g.id);
+        WazeData.invalidate(); await WazeData.refresh(true);
+        return { ok: true };
+      } finally { this.busy = false; }
+    },
+
     async reconcile(quiet) {
       if (this.busy && !quiet) { this.again = true; return; }
       let changed = false, recheck = false;
       await WazeData.refresh();
       for (const row of [...State.generated.values()]) {
         if (row.status === 'Error' || !row.allIds) continue;
+        if (row.saved) { State.generated.delete(row.id); changed = true; continue; }
         const present = [];
         for (const id of row.allIds) if (await getSeg(id)) present.push(id);
         if (row.status === 'Undone') {
@@ -1934,11 +2067,7 @@
           if (row.segmentIds.length) { row.segmentId = row.segmentIds[0]; changed = true; Log.i(`${row.id} follows its edited segment(s): ${row.segmentIds.join(',')}`); }
           continue;
         }
-        // The editor may have reshaped or reconnected the draft, which can give it new IDs and move it
-        // well away from where it was created. Adopt such a segment before deciding it was undone.
         if (await this.adoptEdited(row)) { row._absentSince = null; changed = true; continue; }
-        // Other scripts (road type, river tools...) edit a draft in several steps, so it can be missing
-        // for a moment. Only call it undone if it is still missing a second later.
         if (!row._absentSince) { row._absentSince = Date.now(); recheck = true; continue; }
         if (Date.now() - row._absentSince < 1000) { recheck = true; continue; }
         row._absentSince = null;
@@ -1950,8 +2079,6 @@
       if (this.again) { this.again = false; setTimeout(() => this.reconcile().catch(() => {}), 200); }
     },
 
-    // Finds the unsaved segment(s) the editor turned a draft into: new (negative-ID) segments that no other
-    // row owns and that lie along the original draft line (within 40 m).
     async adoptEdited(row) {
       await WazeData.refresh(true);
       const claimed = new Set();
@@ -1963,8 +2090,6 @@
           const pts = Geo.densify(sg.coords, 6);
           return pts.filter((p) => { const r = Geo.nearestOnLine(p, row.coords); return r && r.dist <= 40; }).length / pts.length >= 0.6;
         }
-        // Already owned by another draft record: the editor merged two drafts into one segment. That
-        // segment then runs along this draft's line too, so this record shares it instead of being undone.
         return rowPts.filter((p) => { const r = Geo.nearestOnLine(p, sg.coords); return r && r.dist <= 12; }).length / rowPts.length >= 0.85;
       }).map((sg) => sg.id);
       if (!mine.length) return false;
@@ -1989,20 +2114,25 @@
     onSaved(ok) {
       if (!ok) return;
       const savedCandIds = new Set();
-      State.generated.forEach((g) => {
+      State.generated.forEach((g, key) => {
         if (g.segmentIds.length) {
-          g.saved = true; g.status = 'Saved'; g.errors = [];
           if (g.candId) savedCandIds.add(g.candId);
+          State.generated.delete(key);
         }
       });
       savedCandIds.forEach((id) => {
         const c = State.candidates.get(id);
         if (c && c.status === 'Drafted') State.candidates.delete(id);
       });
+      const owned = new Set([...State.generated.values()].map((g) => g.candId));
+      State.candidates.forEach((c, id) => {
+        if (c.status === 'Drafted' && !owned.has(id)) State.candidates.delete(id);
+      });
       UI.notify('Saved. The generated segments are now normal roads.', 'ok');
       UI.changed();
       setTimeout(() => this.reconcile().catch(() => {}), 800);
     },
+
     onIdsChanged(list) {
       let n = 0;
       for (const ch of list) {
@@ -2055,10 +2185,10 @@
       catch (err) { Log.e('setSelection failed', err); }
     }
   };
-
   /* ===== UI ===== */
   const UI = {
     pane: null, status: null, busy: false, guide: null, zoom: undefined,
+    importing: false,
 
     async init() {
       const style = document.createElement('style');
@@ -2069,6 +2199,7 @@
           --svra-btn-bg:#f5f5f5; --svra-btn-bg-hover:#e8f0fe; --svra-btn-fg:#222222;
           --svra-btn-primary-bg:#1a73e8; --svra-btn-primary-bg-hover:#1765cc; --svra-btn-primary-fg:#ffffff;
           --svra-btn-on-bg:#e6f7ec; --svra-btn-on-border:#00a844; --svra-btn-on-fg:#00793a;
+          --svra-btn-import-bg:#fff3e0; --svra-btn-import-border:#f9a825; --svra-btn-import-fg:#7a3e00;
           --svra-btn-danger-fg:#c62828; --svra-btn-danger-border:#e57373;
           --svra-row-selected-bg:#e6f7ec;
           --svra-msg-bg:#eeeef8; --svra-msg-ok-bg:#e6f7ec; --svra-msg-err-bg:#fdeaea; --svra-msg-warn-bg:#fff6e0;
@@ -2104,6 +2235,8 @@
         .svra button.primary{background:var(--svra-btn-primary-bg);border-color:var(--svra-btn-primary-bg);color:var(--svra-btn-primary-fg)}
         .svra button.primary:hover{background:var(--svra-btn-primary-bg-hover)}
         .svra button.on{background:var(--svra-btn-on-bg);border-color:var(--svra-btn-on-border);color:var(--svra-btn-on-fg)}
+        .svra button.busy-import{background:var(--svra-btn-import-bg);border-color:var(--svra-btn-import-border);color:var(--svra-btn-import-fg);cursor:progress}
+        .svra button.busy-import:hover{background:var(--svra-btn-import-bg)}
         .svra button.danger{color:var(--svra-btn-danger-fg);border-color:var(--svra-btn-danger-border)}
         .svra button:disabled{opacity:.45;cursor:default}
         .svra .sec{margin:8px 0}
@@ -2148,6 +2281,7 @@
             --svra-btn-bg:#2d3136; --svra-btn-bg-hover:#3a3f45; --svra-btn-fg:#e6e6e6;
             --svra-btn-primary-bg:#3b82f6; --svra-btn-primary-bg-hover:#2563eb; --svra-btn-primary-fg:#ffffff;
             --svra-btn-on-bg:#1e3a2a; --svra-btn-on-border:#34d399; --svra-btn-on-fg:#a7f3d0;
+            --svra-btn-import-bg:#3a2e1a; --svra-btn-import-border:#f59e0b; --svra-btn-import-fg:#fcd34d;
             --svra-btn-danger-fg:#f87171; --svra-btn-danger-border:#b91c1c;
             --svra-row-selected-bg:#1e3a2a;
             --svra-msg-bg:#252a30; --svra-msg-ok-bg:#1a2f22; --svra-msg-err-bg:#3a1e1e; --svra-msg-warn-bg:#3a2e1a;
@@ -2185,8 +2319,6 @@
         if ((tag === 'INPUT' && t.type !== 'checkbox' && t.type !== 'radio' && t.type !== 'button') || tag === 'TEXTAREA') return;
         e.preventDefault();
         e.stopPropagation();
-        // Browsers do not let a script-made key event trigger WME's own shortcut, so call WME's
-        // undo/redo through the SDK. Fall back to a synthetic key event only if the SDK has no such call.
         const fire = () => {
           const map = document.querySelector('#WazeMap, .olMap');
           (map || document.body).dispatchEvent(new KeyboardEvent('keydown', {
@@ -2198,10 +2330,8 @@
         (async () => {
           try {
             if (isUndo) {
-              // 1) newest candidate-level action (flip, 1W/2W)
               const local = LocalUndo.undo();
               if (local) { UI.changed(); UI.notify(`Undid ${local.label}.`, 'info'); return; }
-              // 2) nothing left in WME to undo: clear the ticked candidates instead
               const cnt = await editCount();
               const ticked = Candidates.selected().length;
               if (cnt === 0 && ticked > 0) {
@@ -2210,7 +2340,6 @@
                 return;
               }
             }
-            // 3) WME's own undo
             const fn = isUndo ? sdk.Editing.undo : sdk.Editing.redo;
             if (typeof fn !== 'function') { fire(); return; }
             let r = fn.call(sdk.Editing);
@@ -2243,10 +2372,10 @@
       }
     },
     setBusy(b, text) {
+      const wasBusy = this.busy;
       this.busy = b;
       if (this.pane) {
-        if (b) this.pane.querySelectorAll('button[data-action]').forEach((b2) => { b2.disabled = true; });
-        else this.refresh(); // rebuild so Convert/Remove get their correct enabled state
+        if (b !== wasBusy) this.refresh();    // only re-render when the busy state actually changes
         const el = this.pane.querySelector('#svra-msg');
         if (el && text) { el.className = 'msg info'; el.textContent = text; }
         if (this.converting && !this.pane.querySelector('#svra-stop')) this.setConverting(true);
@@ -2324,6 +2453,24 @@
       if (g.undone) parts.push(`${g.undone} segment(s) undone`);
       if (g.listed) parts.push(`${g.listed} removed from the list only`);
       this.notify(`Removed: ${parts.join(', ') || 'nothing'}.${g.refused ? ` Stopped: ${g.refused}` : ''}${State.trash.length ? ' You can restore removed candidates below.' : ''}`, g.refused ? 'warn' : 'ok');
+      this.changed();
+    },
+
+    removeOneCand(id) {
+      const c = State.candidates.get(id);
+      if (!c || c.status !== 'Candidate') return;
+      this.trashCandidate(Generated.candSnapshot(c));
+      State.candidates.delete(id);
+      this.notify(`Removed candidate ${id}. You can restore it below.`, 'ok');
+      this.changed();
+    },
+
+    async removeOneGen(id) {
+      const g = State.generated.get(id);
+      if (!g) return;
+      const r = await Generated.removeOne(g);
+      if (r.ok) this.notify(r.listed ? `${id} removed from the list (saved roads are never touched).` : `Removed draft ${id}; its candidate can be restored below.`, 'ok');
+      else this.notify(`Could not remove ${id}: ${r.msg}`, 'warn');
       this.changed();
     },
 
@@ -2415,13 +2562,11 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
-    // Collapse the 'Manual review only' dropdown (used when the editor starts a Scan or Convert).
     _closeNotes() {
       this._notesOpen = false;
       const d = this.pane && this.pane.querySelector('details.notes');
       if (d) d.open = false;
     },
-    // Friendly checkpoint: advises the editor, never blocks anything. Dismiss with the x.
     checkpoint(msgs) {
       const list = (Array.isArray(msgs) ? msgs : [msgs]).filter(Boolean);
       if (!list.length) return;
@@ -2451,7 +2596,6 @@
 
     refresh() {
       if (!this.pane) return;
-      // Keep the Settings drawer open and the scroll position across the full re-render.
       const prevDet = this.pane.querySelector('details.more');
       if (prevDet) this._settingsOpen = prevDet.open;
       const prevNotes = this.pane.querySelector('details.notes');
@@ -2481,6 +2625,7 @@
             <button data-action="flip-cand" data-id="${c.id}" title="Swap A and B (reverse node locations). Propagates along the junction chain.">&#8646;</button>
             <button data-action="oneway-cand" data-id="${c.id}" class="${c.oneWay ? 'on' : ''}" title="Switch between two-way (2W) and one-way A to B (1W)">${c.oneWay ? '1W' : '2W'}</button>
             <button data-action="zoom-cand" data-id="${c.id}" title="Zoom to">&#8982;</button>
+            <button data-action="remove-cand" data-id="${c.id}" class="danger" title="Remove only this candidate (ignores the ticks)">&#10005;</button>
           </td>
         </tr>`;
       }).join('');
@@ -2494,7 +2639,7 @@
           <td>${g.id}${note ? `<div class="sub">${note}</div>` : ''}</td>
           <td>${g.segmentIds && g.segmentIds.length ? `${g.segmentIds[0]}${g.segmentIds.length > 1 ? ` <span class="sub">+${g.segmentIds.length - 1}</span>` : ''}` : '&mdash;'}</td>
           <td><span class="tag ${cls}">${g.status}</span></td>
-          <td class="act"><button data-action="zoom-gen" data-id="${g.id}" title="Zoom to">&#8982;</button></td>
+          <td class="act"><button data-action="zoom-gen" data-id="${g.id}" title="Zoom to">&#8982;</button><button data-action="remove-gen" data-id="${g.id}" class="danger" title="Remove/undo only this draft (ignores the ticks and the undo order)">&#10005;</button></td>
         </tr>`;
       }).join('');
 
@@ -2516,6 +2661,11 @@
         <div class="notice"><b>What the script never does.</b> It never saves, never edits existing segments, junctions, or turn restrictions, and never connects a draft to a road. Every draft stays pending until <b>you</b> press Save, and every draft can be undone with <b>Remove</b> or <b>Ctrl+Z</b> in WME.</div>
         </details>
         <div class="top">
+<button class="${this.importing ? 'busy-import' : ''}" data-action="import-sug"
+        ${off}
+        title="Import WME suggestions as candidates. Suggestions can be wrong or incomplete — verify each one against Street View and satellite imagery. WME's suggestion layer is enabled only while the import runs, then disabled again. Scan is independent.">
+  ${this.importing ? 'Importing… ●' : 'Import SUG'}
+</button>
           <button class="${Coverage.visible ? 'on' : ''}" data-action="cov-toggle" title="Street View coverage layer: green = ON, grey = OFF">Street View</button>
           <button class="${s.showGuide ? 'on' : ''}" data-action="guide-toggle" title="Orange scan-area frame: green = ON, grey = OFF">Guide</button>
         </div>
@@ -2582,7 +2732,6 @@
       const guideEl = this.pane.querySelector('#svra-guide');
       if (guideEl) this.paintGuide(guideEl);
     },
-
     onClick(e) {
       const btn = e.target.closest('button[data-action]');
       if (!btn || btn.disabled) return;
@@ -2590,6 +2739,25 @@
       safe(`ui ${btn.dataset.action}`, () => {
         switch (btn.dataset.action) {
           case 'scan': this._closeNotes(); LocalUndo.clear(); Candidates.scan(); break;
+        case 'import-sug': {
+          if (this.importing) break;
+          this.importing = true;
+          this._closeNotes();
+          LocalUndo.clear();
+          this.refresh();                          // paints the busy-import style
+          this.notify('Importing WME suggestions. The suggestion layer is on for this pass only...', 'info');
+          Promise.resolve()
+            .then(() => Candidates.importSuggestions())
+            .catch((e) => Log.e('import-sug', e))
+            .finally(() => {
+              // Reset first, THEN re-render, so the final paint is the non-busy state
+              // and the orange "Importing…" style lives exactly as long as the import does.
+              this.importing = false;
+              this.refresh();
+              try { CandidateLayer.refresh(); } catch (e) { Log.e('cand layer', e); }
+            });
+          break;
+        }
           case 'remove-sel': LocalUndo.clear(); this.removeSelected().catch((e2) => Log.e('remove', e2)); break;
           case 'cov-toggle': Coverage.toggle(); this.refresh(); break;
           case 'guide-toggle': Settings.set('showGuide', !Settings.get('showGuide')); this.updateGuide(); this.refresh(); break;
@@ -2612,6 +2780,8 @@
           case 'zoom-cand': { const c = State.candidates.get(id); if (c) MapUtil.focus(c.coords[Math.floor(c.coords.length / 2)]).catch(() => {}); break; }
           case 'zoom-gen': { const g = State.generated.get(id); if (g) Generated.zoomTo(g).catch(() => {}); break; }
           case 'select-gen': { const g = State.generated.get(id); if (g) Generated.select(g).catch(() => {}); break; }
+          case 'remove-cand': LocalUndo.clear(); this.removeOneCand(id); break;
+          case 'remove-gen': LocalUndo.clear(); this.removeOneGen(id).catch((e4) => Log.e('remove one', e4)); break;
           case 'restore-trash': LocalUndo.clear(); this.restoreTrash(); break;
           default: break;
         }
@@ -2647,10 +2817,7 @@
       if (['autoSampleZoom', 'sampleZoom', 'maxSampleTiles', 'splitAtJunctions'].includes(key)) this.updateGuide();
     }
   };
-
   /* ===== LOCAL UNDO (candidate-level actions: flip, 1W/2W) ===== */
-  // These are not WME edits, so WME's undo cannot reverse them. Each action saves a snapshot of the
-  // candidates' orientation fields first; Ctrl+Z in the panel restores the newest snapshot.
   const LocalUndo = {
     stack: [],
     push(label) {
@@ -2685,11 +2852,9 @@
       eventName: 'wme-layer-feature-clicked',
       eventHandler: async ({ featureId, layerName }) => {
         if (layerName !== LAYER_CANDIDATE || typeof featureId !== 'string') return;
-        const m = /^(C-\d+)(?:-|$)/.exec(featureId);   // line, arrow and junction-dot ids all start with the candidate id
+        const m = /^(C-\d+)(?:-|$)/.exec(featureId);
         const c = State.candidates.get(m ? m[1] : featureId);
         if (!c || c.status !== 'Candidate') return;
-        // While the editor works on a draft segment, a click that lands on a nearby candidate line is
-        // part of that edit (dragging a node, selecting the draft), not a request to tick the candidate.
         await sleep(60);
         if (await editingDraft()) { Log.d(`ignored click on ${c.id}: a draft segment is selected`); return; }
         c.selected = !c.selected; UI.changed();
@@ -2833,6 +2998,7 @@
       await WazeData.refresh();
       Coverage.init();
       CandidateLayer.init();
+      await SuggestionLayer.init();
       await UI.init();
       wireMapEvents();
       UI.updateZoom();
@@ -2840,8 +3006,8 @@
       Coverage.watchStreetView();
 
       UI.changed();
-      W.__SVRA__ = { State, Settings, Geo, Junctions, Chain, Candidates, Generated, Coverage };
-      Log.i('Initialised v1.0.0-beta (build 2026-11-07-m: merged drafts, empty-view wait, author defaults)');
+      W.__SVRA__ = { State, Settings, Geo, Junctions, Chain, Candidates, Generated, Coverage, SuggestionLayer };
+      Log.i('Initialised v1.0.0-beta (build 2026-11-13-c: layer state re-sync + suggestion wait)');
     } catch (err) {
       Log.e('Initialisation failed', err);
     }
