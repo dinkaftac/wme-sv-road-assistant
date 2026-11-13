@@ -11,6 +11,7 @@ Built to assist a human editor, not to mass-edit: the tool proposes, the editor 
 - Scans the current map view for Street View coverage that has no mapped Waze segment nearby.
 - Traces candidate lines from that coverage and lists them in a table.
 - Splits candidates at existing junctions and flags A/B direction "seams" where a draft meets a mapped road.
+- Imports WME segment suggestions as candidates, so flagged missing roads go through the same review flow.
 - On **Convert** (a click from you), creates the ticked candidates as new draft segments in WME.
 
 ## What it never does
@@ -59,6 +60,7 @@ The script requests Street View coverage tiles from `mts*.google.com` and derive
 - **Never stops early.** If the tiles around one candidate are not confirmed after a second, longer wait, that candidate is skipped and stays ticked. The rest of the click carries on, and the final message names the skipped candidates so you can press Convert again.
 - **Checks WME kept the drafts.** After each sub-batch the script confirms every draft still exists. If WME silently dropped one ("That change isn't allowed at this time"), the candidate returns to the list, unticked, tagged "WME rejected this draft". One refused draft never stops the rest.
 - **Returns to where you were.** After the last draft the script pauses for 2 seconds so you can see it, then snaps the map back to your starting view.
+- **Road type validated.** The Road type preset is checked against the list WME reports for your account. If the chosen preset's road type is not in that list (for example, on a WME build where road type IDs changed), the script logs a warning and falls back to Street, so a draft is never created with a road type WME would reject.
 
 ### After conversion
 
@@ -69,6 +71,18 @@ The script requests Street View coverage tiles from `mts*.google.com` and derive
 ### Undo
 
 Use **Remove** on a converted draft, or Ctrl+Z in WME while the drafts are still unsaved. Ctrl+Z in the panel undoes a flip or 1W/2W change first, then clears ticks when WME has nothing left to undo. Remove undoes drafts newest-first and refuses if other edits were made after them, so nothing else is lost.
+
+## Import WME suggestions
+
+WME lets editors flag missing roads as suggestions. The script can import those OPEN suggestions as candidates, so they go through the same Scan-like → Convert → Save workflow.
+
+- The import enables WME's **Edit Suggestions** layer for the duration of the import, then restores whatever state it was in before. If the layer was on before the import it stays on; if it was off it goes back to off. Your own on/off choice is never overridden.
+- Only suggestions marked OPEN, with no attached segment, and whose geometry is inside the viewport are imported.
+- Suggestions already covered by a candidate or a mapped road are merged or skipped.
+- If the layer was off before the import, the script briefly waits for WME to actually deliver suggestion data before reading it, so the first import after a fresh zoom isn't empty.
+- The **Import SUG** button shows the busy "Importing… ●" style for exactly the duration of the import.
+
+Import is independent of Scan. Scan works on coverage gaps, Import works on WME suggestions, and neither requires the other.
 
 ## Reminders (never blocking)
 
@@ -85,6 +99,7 @@ All reminders are friendly checkpoints shown as a dismissible box at the top of 
 | **Scan** | Finds candidates in the current view. |
 | **Convert** | Creates the ticked candidates as new drafts in WME. Nothing is saved. |
 | **Remove** | Undoes the ticked drafts, or removes ticked rows from the lists. |
+| **Import SUG** | Imports WME segment suggestions as candidates. See "Import WME suggestions" above. |
 | **Flip (⇆)** | Swaps the A and B ends of a candidate. Also flips neighbours that share a junction within 3 m. The result carries into the segment when you Convert. |
 | **1W / 2W** | Switches a candidate between one-way (A to B) and two-way. |
 | **Zoom (⌖)** | Zooms the map to a candidate. |
@@ -125,8 +140,11 @@ Saved in your browser (`localStorage`, key `wme-svra-settings`).
 
 ## Troubleshooting
 
-- **The panel does not appear:** check that your userscript manager is enabled for the page and that Chrome's "Allow User Scripts" toggle is on. Open the browser console and filter by `WME Street View Road Assistant`. You should see `SDK initialized in async mode`, `WME ready` and `Initialised v1.0.0-beta`.
+- **The panel does not appear:** check that your userscript manager is enabled for the page and that Chrome's "Allow User Scripts" toggle is on. Open the browser console and filter by `WME Street View Road Assistant`. You should see `SDK initialized in async mode`, `WME ready` and `Initialised v1.0.0-beta (build 2026-11-13-c: …)`. The build string tells you which revision is loaded, so if it prints an older build string than the one you installed, Tampermonkey is serving a cached copy.
 - **Scan finds no coverage or reports that no tiles loaded:** the Street View tile endpoint may be blocked, offline or changed (see "How candidate shapes are made"). The message names the first failed tile.
+- **Import reports "This WME build has no SegmentSuggestions API":** Import requires `sdk.DataModel.SegmentSuggestions`, which is not present on every WME build. Scan works regardless.
+- **Import reports "Suggestions in view: 0 open" on the first import after a fresh zoom:** WME had not yet delivered the suggestion data. Press Import again; the layer is already on, so the second pass sees the data. Alternatively raise the internal wait cap.
+- **"Could not undo … Use Ctrl+Z in WME":** the script's undo guard fires when other edits exist after the draft it's trying to undo, so it cannot prove nothing else will be undone. Undo the intervening edits in WME first.
 - **Debug output:** run `localStorage.setItem('wme-svra-debug','1')` in the console and reload. Run `localStorage.removeItem('wme-svra-debug')` to turn it off.
 
 ## Known limitations
@@ -136,6 +154,7 @@ Saved in your browser (`localStorage`, key `wme-svra-settings`).
 - The wait for map data is a heuristic. WME exposes no exact "tiles loaded" signal, so a draft can still be treated as a suggested edit on a slow connection. If that happens, raise "Wait for map tiles before Convert".
 - Large views are scanned in the centre area only, within the tile budget. Work in smaller views for full coverage.
 - Scanning again can join new pieces onto existing candidates or split them at junctions. Review after your last scan.
+- Imported suggestions reflect whatever the WME community flagged, which can be wrong or incomplete. Verify each one.
 
 ## Compliance and accountability
 
